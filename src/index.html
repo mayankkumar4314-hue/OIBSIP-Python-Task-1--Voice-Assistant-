@@ -1,0 +1,94 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Voice Assistant</title>
+  <style>
+    :root { color-scheme: light dark; font: 16px/1.5 system-ui, sans-serif; }
+    body { margin: 0; min-height: 100vh; display: grid; place-items: center; background: #101827; color: #eef3fb; }
+    main { width: min(92vw, 620px); box-sizing: border-box; padding: 2rem; border: 1px solid #34445c; border-radius: 20px; background: #172337; }
+    h1 { margin-top: 0; } p { color: #bdcbe0; }
+    form { display: flex; gap: .6rem; margin: 1.5rem 0; }
+    input { min-width: 0; flex: 1; padding: .85rem; border-radius: 10px; border: 1px solid #52637b; background: #0e1828; color: inherit; }
+    button { padding: .8rem 1rem; border: 0; border-radius: 10px; background: #71a7ff; color: #071322; font-weight: 650; cursor: pointer; }
+    button.secondary { background: #34445c; color: #eef3fb; }
+    #status { min-height: 1.5em; color: #a9c9ff; }
+    #log { display: grid; gap: .65rem; max-height: 40vh; overflow-y: auto; }
+    .entry { padding: .8rem 1rem; border-radius: 10px; background: #0e1828; white-space: pre-wrap; }
+    .entry.user { border-left: 3px solid #71a7ff; }
+    .entry.assistant { border-left: 3px solid #70d6aa; }
+    @media (max-width: 480px) { main { padding: 1.2rem; } form { flex-wrap: wrap; } form input { flex-basis: 100%; } }
+  </style>
+</head>
+<body>
+  <main>
+    <h1>Voice Assistant</h1>
+    <p>Type a command or use the microphone. Try “What time is it?”, “Search for Python tutorials”, or “Remind me in 1 minute to stretch”.</p>
+    <form id="form">
+      <input id="command" autocomplete="off" placeholder="Type a command…" aria-label="Command">
+      <button type="submit">Send</button>
+      <button class="secondary" id="mic" type="button">🎙 Speak</button>
+    </form>
+    <div id="status" role="status" aria-live="polite">Ready.</div>
+    <section id="log" aria-live="polite"></section>
+  </main>
+  <script>
+    const form = document.querySelector('#form');
+    const input = document.querySelector('#command');
+    const log = document.querySelector('#log');
+    const status = document.querySelector('#status');
+    function add(text, who) {
+      const item = document.createElement('div');
+      item.className = `entry ${who}`;
+      item.textContent = `${who === 'user' ? 'You' : 'Assistant'}: ${text}`;
+      log.append(item);
+      item.scrollIntoView({ behavior: 'smooth', block: 'end' });
+    }
+    function speak(text) {
+      if ('speechSynthesis' in window) {
+        window.speechSynthesis.cancel();
+        window.speechSynthesis.speak(new SpeechSynthesisUtterance(text));
+      }
+    }
+    async function send(command) {
+      if (!command.trim()) return;
+      add(command, 'user');
+      input.value = '';
+      status.textContent = 'Thinking…';
+      try {
+        const response = await fetch('/api/command', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ command })
+        });
+        const data = await response.json();
+        if (!response.ok) throw new Error(data.error || 'Request failed.');
+        for (const message of data.responses) { add(message, 'assistant'); speak(message); }
+        status.textContent = 'Ready.';
+      } catch (error) { status.textContent = error.message; }
+    }
+    form.addEventListener('submit', event => { event.preventDefault(); send(input.value); });
+    const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+    document.querySelector('#mic').addEventListener('click', () => {
+      if (!SpeechRecognition) { status.textContent = 'This browser does not support speech recognition. Try the latest Chrome or Edge, or type your command.'; return; }
+      const recognition = new SpeechRecognition();
+      recognition.lang = navigator.language || 'en-US';
+      recognition.onstart = () => { status.textContent = 'Listening…'; };
+      recognition.onerror = event => {
+        const help = {
+          'not-allowed': 'Allow microphone access for this site in your browser settings, then reload.',
+          'service-not-allowed': 'Speech recognition is blocked by the browser. Try the latest Chrome or Edge.',
+          'audio-capture': 'No microphone is available. Connect one and check your system microphone settings.',
+          'no-speech': 'No speech was detected. Try again and speak after it starts listening.',
+          'network': 'The browser speech service could not connect. Check your internet connection or type your command.',
+          'language-not-supported': 'The browser does not support the selected language.'
+        };
+        status.textContent = `Microphone error (${event.error}): ${help[event.error] || 'Check browser microphone permissions and try again.'}`;
+      };
+      recognition.onresult = event => send(event.results[0][0].transcript);
+      recognition.onend = () => { if (status.textContent === 'Listening…') status.textContent = 'Ready.'; };
+      recognition.start();
+    });
+  </script>
+</body>
+</html>
